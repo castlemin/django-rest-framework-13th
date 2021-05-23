@@ -339,17 +339,32 @@ class PostFilter(FilterSet):
     pub_date__lt = filters.DateFilter(field_name='pub_date', lookup_expr='lt') #입력된 날짜 이전에 게시된 Post 필터링
     pub_date__range = filters.DateFromToRangeFilter(field_name='pub_date', lookup_expr='range') #입력된 기간 내 게시된 Post 필터링
     content__icontains = filters.CharFilter(field_name='content', lookup_expr='icontains') #입력된 값을 content field value에 갖고 있는 Post 필터링
+    pub_date__recent_12h = filters.BooleanFilter(field_name='pub_date', method='filter_recent_12h')
 
 
     class Meta:
         model = Post
         fields = ['profile', 'pub_date', 'content', 'location'] # 해당 Field에 대해 lookup_expr = 'exact' 필터링
-
+ 
+    def filter_recent_12h(self, queryset, pub_date, value):
+        current_time = timezone.now()
+        ref_time = current_time - dt.timedelta(hours=12)
+        if value:
+            filtered_queryset = queryset.filter(pub_date__gt=ref_time)
+        else:
+            filtered_queryset = queryset.filter(pub_date__lt=ref_time)
+        return filtered_queryset
 ```
 ![image](https://user-images.githubusercontent.com/78783840/118245178-6f1de600-b4db-11eb-9ebc-5d66c157450d.png)
+  
+  
+[location: Gimpo]
+<br>
 ![image](https://user-images.githubusercontent.com/78783840/118245247-88269700-b4db-11eb-9834-cabdcca95d6e.png)
+  
+<br>[recent_12h : True]
+<br>![image](https://user-images.githubusercontent.com/78783840/118387104-3acf3480-b657-11eb-9b82-afece89e27ea.png)
 
-* method를 이용한 필터링 부분이 잘 구현되지 않아서 더 공부하고 꼭 추가하려합니다.
 <br>
 <br>
 
@@ -383,8 +398,6 @@ class PostFilter(FilterSet):
      QuerySet method인 filter(), exclude(), get()의 인자로 사용되며 특정 instances를 호출하기 위한 조건?이 된다.
   > * method:  
    filter의 optional argument로 직접 정의한 메써드로 필터링
-  >* types:  
-     field의 종류에 따라 그에 맞는 filter를 사용해야 함(ex. CharFilter, BooleanFilter 등)
   >* FilterSet의 Meta에 지정된 fields 들은 기본적으로 lookup_expr = 'exact'  
   >* FK관계에 있는 모델의 필드를 쓰려면 __을 사용한다.
   >* 참고:  
@@ -401,5 +414,66 @@ class PostFilter(FilterSet):
 
 이번 주차 과제가 장고에서 정말 중요한 내용을 다룬다는 생각이 들었다.
 그래서인지 3,4번 과제인 permission과 validation을 못해서 너무 아쉬웠고 꼭 해봐야겠다.
-method를 이용해 최근 12시간 내 등록된 post가 나오는 filerting을 구현하고 싶었는데 애를 많이 먹고 실패했다.  
-혹시 일요일 스터디까지 내가 해결을 못하면 CustomLookup을 만들어야 하는 것인 지 여쭙고 싶어용.
+method를 공부하다가 lookup을 custom 할 수도 있다는 것을 알게 됐는데 나중에 꼭 공부해봐야겠다.
+
+<br>
+<br>
+<br>
+
+
+## 6주차 총정리
+<hr>
+
+###계획
+#### File/Image 경로 수정 - 나머지 모델 ViewSet & Filter 추가 - Custom Permission  - Validation 추가 - 태그/좋아요 기능 
+
+###Filefield / Imagefield 경로 설정
+```python
+def profile_directory_path(instance, filename):
+    return 'user_{0}/profile_image/{1}'.format(instance.user.id, filename)
+
+def media_directory_path(instance, filename):
+    return 'user_{0}/upload_{1}//%Y/%m/%d/{2}'.format(instance.user.id, instance.post.pk, filename)
+
+profile_image = models.ImageField(upload_to=profile_directory_path, blank=True, null=True)
+```
+upload_to 에 함수가 들어가도 되고, 그 경우 해당함수는 instance와 filename을 필수적으로 attr로서 갖고 있어야 함.
+
+###Permission
+SAFE_METHODS = ('GET', 'HEAD', 'OPTIONS')
+
+
+>###Permission Class
+>* AllowAny : 인증여부에 상관없이 뷰 호출 허용 (default)
+>* IsAuthenticated : 인증된 요청에 한해서 뷰호출 허용
+>* IsAdminUser : Staff 인증 요청에 한해서 뷰호출 허용
+>* IsAuthenticatedOrReadOnly : 비인증 요청에게는 읽기 권한만 허용
+>* DjangoModelPermissions : 인증된 요청에 한해서만 뷰 호출 허용, 추가로 유저별 인증 권한체크를 수행
+>* DjangoModelPermissionsOrAnonReadOnly : DjangoModelPermissions 와 유사하나 비인증 요청에 대해서는 읽기 권한만 허용
+>* DjangoObjectPermissions : 비인증된 요청 거부 / 인증된 레코드 접근에 대한 권한체크를 추가로 수행
+
+>###Custom Permission class
+> 모든 Permission 클래스는 다음 2가지 함수를 선택적으로 구현합니다.
+> * has_permission(request, view)
+>   * 뷰 호출 접근 권한
+>   * APIView 접근 시 체크
+> * has_object_permission(request, view, obj)
+>   * 개별 레코드 접근 권한
+>   * APIView 의 get_object 함수를 통해 object 획득 시 체크
+>   * 브라우저를 통한 API 접근시에 CREATE/UPDATE Form 노출 여부 확인 시에
+
+```python
+# Authorized 중 User만 수정가능
+class IsUserOrReadonly(permissions.BasePermission):
+    def has_permission(self, request, view):
+        # Authenticated 되었는 지 확인
+        return request.user.is_authenticated
+
+    def has_object_permission(self, request, view, obj):
+        if request.method in permissions.SAFE_METHODS:
+            # GET / HEAD / OPTION 에 대하여 True
+            return True
+            # 그 외 request
+        return obj.user == request.user
+```
+
